@@ -1,0 +1,897 @@
+/* *******************************************************************
+   Pages for Webserver
+
+   sendPage()
+   - sends the requested page (incl. 404 error and JSON document)
+   - displays main page, renders title and left menu using <div> 
+   - calls content functions depending on the number (i.e. URL) of the requested web page
+   - also displays buttons for some of the pages
+   - in order to save flash memory, some HTML closing tags are omitted, new lines in HTML code are also omitted
+
+   contentInfo(), contentStatus(), contentIp(), contentTcp(), contentRtu(), contentTools()
+   - render the content of the requested page
+
+   contentWait()
+   - renders the "please wait" message instead of the content, will be forwarded to home page after 5 seconds
+
+   tagInputNumber(), tagLabelDiv(), tagButton(), tagDivClose(), tagSpan()
+   - render snippets of repetitive HTML code for <input>, <label>, <div>, <button> and <span> tags
+
+   stringPageName(), stringStats()
+   - renders repetitive strings for menus, error counters
+
+   jsonVal()
+   - provide JSON value to a corresponding JSON key
+
+   ***************************************************************** */
+
+const byte WEB_OUT_BUFFER_SIZE = 256;  // size of web server write buffer (used by StreamLib)
+
+char* webOutBuffer = nullptr;
+
+static char* pinName0 = "ADI_0 / PIN15";
+static char* pinName1 = "ADI_1 / PIN16";
+static char* pinName2 = "ADI_2 / PIN17";
+static char* pinName3 = "ADI_3 / PIN18";
+static char* pinName4 = "DI_4 / PIN25";
+static char* pinName5 = "DI_5 / PIN26";
+static char* pinName6 = "DI_6 / PIN27";
+static char* pinName7 = "DI_7 / PIN28";
+
+static const uint8_t NUM_DI_PINS = 8;
+static char* pinNames[NUM_DI_PINS] = {pinName0, pinName1, pinName2, pinName3, pinName4, pinName5, pinName6, pinName7};
+static const uint32_t inputPins[NUM_DI_PINS] = {pin15, pin16, pin17, pin18, pin25, pin26, pin27, pin28};
+
+void beginBuffer(){
+  webOutBuffer = new char[WEB_OUT_BUFFER_SIZE];
+}
+
+
+
+void sendPage(EthernetClient &client, byte reqPage) {
+
+  ChunkedPrint chunked(client, webOutBuffer, WEB_OUT_BUFFER_SIZE);  // the StreamLib object to replace client print
+  /*
+
+use HTTP/1.0 because 
+- HOSTS: isn't necessary as the Arduino will only host one server.
+- in HTTP/1.1 HOSTS: is mandatory (and necessary if you HOST more than one site on one server) and the server should answer a request with "400 Bad Request" if it is missing
+- we don't need to send a Content-Length in HTTP/1.0
+
+An advantage of HTTP 1.1 is
+- you could keep the connection alive
+ 
+ */
+  if (reqPage == PAGE_ERROR) {
+    chunked.print(F("HTTP/1.1 404 Not Found\r\n"
+                    "\r\n"
+                    "404 Not found"));
+    chunked.end();
+    return;
+  } else if (reqPage == PAGE_DATA) {
+    chunked.print(F("HTTP/1.1 200\r\n"
+                    "Content-Type: application/json\r\n"
+                    "Transfer-Encoding: chunked\r\n"
+                    "\r\n"));
+    chunked.begin();
+    chunked.print(F("{"));
+    for (byte i = 0; i < JSON_LAST; i++) {
+      if (i) chunked.print(F(","));
+      chunked.print(F("\""));
+      chunked.print(i);
+      chunked.print(F("\":\""));
+      jsonVal(chunked, i);
+      chunked.print(F("\""));
+    }
+    chunked.print(F("}"));
+    chunked.end();
+    return;
+  }
+  chunked.print(F("HTTP/1.1 200 OK\r\n"
+                  "Content-Type: text/html\r\n"
+                  "Transfer-Encoding: chunked\r\n"
+                  "\r\n"));
+  chunked.begin();
+  chunked.print(F("<!DOCTYPE html>"
+                  "<html>"
+                  "<head>"
+                  "<meta"));
+  if (reqPage == PAGE_WAIT) {  // redirect to new IP and web port
+    chunked.print(F(" http-equiv=refresh content=5;url=http://"));
+    chunked.print(IPAddress(data.config.ip));
+    chunked.print(F(":"));
+    chunked.print(data.config.webPort);
+  }
+  chunked.print(F(">"
+                  "<title>Modbus RTU &rArr; Modbus TCP/UDP Gateway</title>"
+                  "<style>"
+                  /*
+                  HTML Tags
+                    h1 - main title of the page
+                    h4 - text in navigation menu and header of page content
+                    a - items in left navigation menu
+                    label - first cell of a row in content
+                  CSS Classes
+                    w - wrapper (includes m + c)
+                    m  - navigation menu (left)
+                    c - content of a page
+                    r - row inside a content
+                    i - short input (byte or IP address octet)
+                    n - input type=number
+                    s - select input with numbers
+                    p - inputs disabled by id=o checkbox
+                  CSS Ids
+                    o - checkbox which disables other checkboxes and inputs
+                  */
+                  "body,.m{padding:1px;margin:0;font-family:sans-serif}"
+                  "h1,h4{padding:10px}"
+                  "h1,.m,h4{background:#EB8C00;margin:1px}"
+                  ".m,.c{height:calc(100vh - 71px)}"
+                  ".m{min-width:20%}"
+                  ".c{flex-grow:1;overflow-y:auto}"
+                  ".w,.r{display:flex}"
+                  "a,h1,h4{color:white;text-decoration:none}"
+                  ".c h4{padding-left:30%;margin-bottom:20px}"
+                  ".r{margin:4px}"
+                  "label{width:30%;text-align:right;margin-right:2px}"
+                  "input,button,select{margin-top:-2px}"  // improve vertical allignment of input, button and select
+                  ".s{text-align:right}"
+                  ".s>option{direction:rtl}"
+                  ".i{text-align:center;width:3ch;color:black}"
+                  ".n{width:8ch}"
+                  "</style>"
+                  "</head>"
+                  "<body"));
+#ifdef ENABLE_DHCP
+  chunked.print(F(" onload=g(document.getElementById('o').checked)>"
+                  "<script>function g(h) {var x = document.getElementsByClassName('p');for (var i = 0; i < x.length; i++) {x[i].disabled = h}}</script"));
+#endif /* ENABLE_DHCP */
+  if (reqPage == PAGE_STATUS) {
+    chunked.print(F("><script>"
+                    "var a;"
+                    "const b=()=>{"
+                    "fetch('d.json')"  // Call the fetch function passing the url of the API as a parameter
+                    ".then(e=>{return e.json();a=0})"
+                    ".then(f=>{for(var i in f){if(document.getElementById(i))document.getElementById(i).innerHTML=f[i];}})"
+                    ".catch(()=>{if(!a){alert('Connnection lost');a=1}})"
+                    "};"
+                    "setInterval(()=>b(),"));
+    chunked.print(FETCH_INTERVAL);
+    chunked.print(F(");"
+                    "</script"));
+  }
+
+
+  if (reqPage == PAGE_SERVER) {
+    chunked.print(F("><script>"
+                    "var a;"
+                    "const b=()=>{"
+                    "fetch('d.json')"  // Call the fetch function passing the url of the API as a parameter
+                    ".then(e=>{return e.json();a=0})"
+                    ".then(f=>{for(var i in f){if(document.getElementById(i))document.getElementById(i).innerHTML=f[i];}})"
+                    ".catch(()=>{if(!a){alert('Connnection lost');a=1}})"
+                    "};"
+                    "setInterval(()=>b(),"));
+    chunked.print(STATUS_FETCH_INTERVAL);
+    chunked.print(F(");"
+                    "</script"));
+  }
+
+  chunked.print(F(">"
+                  "<h1>Modbus RTU &rArr; Modbus TCP/UDP Gateway</h1>"
+                  "<div class=w>"
+                  "<div class=m>"));
+
+  // Left Menu
+  for (byte i = 1; i < PAGE_WAIT; i++) {  // PAGE_WAIT is the last item in enum
+    chunked.print(F("<h4 "));
+    if ((i) == reqPage) {
+      chunked.print(F(" style=background-color:black"));
+    }
+    chunked.print(F("><a href="));
+    chunked.print(i);
+    chunked.print(F(".htm>"));
+    stringPageName(chunked, i);
+    chunked.print(F("</a></h4>"));
+  }
+  chunked.print(F("</div>"  // <div class=w>
+                  "<div class=c>"
+                  "<h4>"));
+  stringPageName(chunked, reqPage);
+  chunked.print(F("</h4>"
+                  "<form method=post>"));
+
+  //   PLACE FUNCTIONS PROVIDING CONTENT HERE
+
+  switch (reqPage) {
+    case PAGE_INFO:
+      contentInfo(chunked);
+      break;
+    case PAGE_STATUS:
+      contentStatus(chunked);
+      break;
+    case PAGE_IP:
+      contentIp(chunked);
+      break;
+    case PAGE_TCP:
+      contentTcp(chunked);
+      break;
+    case PAGE_RTU:
+      contentRtu(chunked);
+      break;
+    case PAGE_TOOLS:
+      contentTools(chunked);
+      break;
+    case PAGE_SERVER:
+      contentServer(chunked);
+      break;
+    case PAGE_WAIT:
+      contentWait(chunked);
+      break;
+    default:
+      break;
+  }
+
+  if (reqPage == PAGE_IP || reqPage == PAGE_TCP || reqPage == PAGE_RTU) {
+    chunked.print(F("<p><div class=r><label><input type=submit value='Save & Apply'></label><input type=reset value=Cancel></div>"));
+  }
+  chunked.print(F("</form>"));
+  tagDivClose(chunked);  // close tags <div class=c> <div class=w>
+  chunked.end();         // closing tags not required </body></html>
+}
+
+
+//        System Info
+void contentInfo(ChunkedPrint &chunked) {
+  tagLabelDiv(chunked, F("SW Version"));
+  chunked.print(VERSION[0]);
+  chunked.print(F("."));
+  chunked.print(VERSION[1]);
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("Microcontroller"));
+  chunked.print(BOARD);
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("EEPROM Health"));
+  chunked.print(data.eepromWrites);
+  chunked.print(F(" Write Cycles"));
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("Ethernet Chip"));
+  switch (W5100.getChip()) {
+    case 51:
+      chunked.print(F("W5100"));
+      break;
+    case 52:
+      chunked.print(F("W5200"));
+      break;
+    case 55:
+      chunked.print(F("W5500"));
+      break;
+    default:  // TODO: add W6100 once it is included in Ethernet library
+      chunked.print(F("Unknown"));
+      break;
+  }
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("Ethernet Sockets"));
+  chunked.print(maxSockNum);
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("MAC Address"));
+  for (byte i = 0; i < 6; i++) {
+    chunked.print(hex(data.mac[i]));
+    if (i < 5) chunked.print(F(":"));
+  }
+  tagDivClose(chunked);
+
+#ifdef ENABLE_DHCP
+  tagLabelDiv(chunked, F("DHCP Status"));
+  if (!data.config.enableDhcp) {
+    chunked.print(F("Disabled"));
+  } else if (dhcpSuccess == true) {
+    chunked.print(F("Success"));
+  } else {
+    chunked.print(F("Failed, using fallback static IP"));
+  }
+  tagDivClose(chunked);
+#endif /* ENABLE_DHCP */
+
+  tagLabelDiv(chunked, F("IP Address"));
+  chunked.print(IPAddress(Ethernet.localIP()));
+  tagDivClose(chunked);
+}
+
+//        Modbus Status
+void contentStatus(ChunkedPrint &chunked) {
+
+#ifdef ENABLE_EXTENDED_WEBUI
+  tagLabelDiv(chunked, F("Run Time"));
+  tagSpan(chunked, JSON_TIME);
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("RTU Data"));
+  tagSpan(chunked, JSON_RTU_DATA);
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("Ethernet Data"));
+  tagSpan(chunked, JSON_ETH_DATA);
+  tagDivClose(chunked);
+#endif /* ENABLE_EXTENDED_WEBUI */
+
+  chunked.flush();
+  tagLabelDiv(chunked, F("Modbus RTU Request"));
+  for (byte i = 0; i <= POST_REQ_LAST - POST_REQ; i++) {
+    bool required = false;
+    bool printVal = false;
+    byte value;
+    if (i == 0 || i == 1) {
+      required = true;  // first byte (slave address) and second byte (function code) are required
+    }
+    if (i < requestLen) {
+      printVal = true;
+      value = request[i];
+    }
+    tagInputHex(chunked, POST_REQ + i, required, printVal, value);
+  }
+  chunked.print(F("h (without CRC) <input type=submit value=Send>"));
+  tagButton(chunked, F("Clear"), ACT_CLEAR_REQUEST);
+  tagDivClose(chunked);
+  chunked.flush();
+
+  chunked.print(F("</form><form method=post>"));
+  tagLabelDiv(chunked, F("Modbus RTU Response"));
+  tagSpan(chunked, JSON_RESPONSE);
+  tagDivClose(chunked);
+  chunked.flush();
+
+  tagLabelDiv(chunked, F("Requests Queue"));
+  tagSpan(chunked, JSON_QUEUE);
+  tagDivClose(chunked);
+  chunked.flush();
+
+  tagLabelDiv(chunked, F("Modbus Statistics"));
+  tagButton(chunked, F("Reset Stats"), ACT_RESET_STATS);
+  chunked.print(F("<br>"));
+  tagSpan(chunked, JSON_STATS);
+  tagDivClose(chunked);
+  chunked.flush();
+
+  tagLabelDiv(chunked, F("Modbus Masters"));
+  tagSpan(chunked, JSON_TCP_UDP_MASTERS);
+  tagDivClose(chunked);
+  chunked.flush();
+
+  tagLabelDiv(chunked, F("Modbus Slaves"));
+  tagButton(chunked, F("Scan Slaves"), ACT_SCAN);
+  chunked.print(F("<br>"));
+  tagSpan(chunked, JSON_SLAVES);
+  tagDivClose(chunked);
+  chunked.flush();
+}
+
+//            IP Settings
+void contentIp(ChunkedPrint &chunked) {
+
+  tagLabelDiv(chunked, F("MAC Address"));
+  for (byte i = 0; i < 6; i++) {
+    tagInputHex(chunked, POST_MAC + i, true, true, data.mac[i]);
+    if (i < 5) chunked.print(F(":"));
+  }
+
+  chunked.flush();
+  tagButton(chunked, F("Randomize"), ACT_MAC);
+  tagDivClose(chunked);
+
+#ifdef ENABLE_DHCP
+  tagLabelDiv(chunked, F("Auto IP"));
+  chunked.print(F("<input type=hidden name="));
+  chunked.print(POST_DHCP, HEX);
+  chunked.print(F(" value=0>"
+                  "<input type=checkbox id=o name="));
+  chunked.print(POST_DHCP, HEX);
+  chunked.print(F(" onclick=g(this.checked) value=1"));
+  if (data.config.enableDhcp) chunked.print(F(" checked"));
+  chunked.print(F("> DHCP"));
+  tagDivClose(chunked);
+#endif /* ENABLE_DHCP */
+
+  byte *tempIp;
+  for (byte j = 0; j < 3; j++) {
+    switch (j) {
+      case 0:
+        tagLabelDiv(chunked, F("Static IP"));
+        tempIp = data.config.ip;
+        break;
+      case 1:
+        tagLabelDiv(chunked, F("Submask"));
+        tempIp = data.config.subnet;
+        break;
+      case 2:
+        tagLabelDiv(chunked, F("Gateway"));
+        tempIp = data.config.gateway;
+        break;
+      default:
+        break;
+    }
+    tagInputIp(chunked, POST_IP + (j * 4), tempIp);
+    tagDivClose(chunked);
+  }
+#ifdef ENABLE_DHCP
+  tagLabelDiv(chunked, F("DNS Server"));
+  tagInputIp(chunked, POST_DNS, data.config.dns);
+  tagDivClose(chunked);
+#endif /* ENABLE_DHCP */
+}
+
+//            TCP/UDP Settings
+void contentTcp(ChunkedPrint &chunked) {
+  uint16_t value;
+  for (byte i = 0; i < 3; i++) {
+    switch (i) {
+      case 0:
+        tagLabelDiv(chunked, F("Modbus TCP Port"));
+        value = data.config.tcpPort;
+        break;
+      case 1:
+        tagLabelDiv(chunked, F("Modbus UDP Port"));
+        value = data.config.udpPort;
+        break;
+      case 2:
+        tagLabelDiv(chunked, F("WebUI Port"));
+        value = data.config.webPort;
+        break;
+      default:
+        break;
+    }
+    tagInputNumber(chunked, POST_TCP + i, 1, 65535, value, F(""));
+    tagDivClose(chunked);
+  }
+  tagLabelDiv(chunked, F("Modbus Mode"));
+  chunked.print(F("<select name="));
+  chunked.print(POST_RTU_OVER, HEX);
+  chunked.print(F(">"));
+  chunked.flush();
+  for (byte i = 0; i < 2; i++) {
+    chunked.print(F("<option value="));
+    chunked.print(i);
+    if (data.config.enableRtuOverTcp == i) chunked.print(F(" selected"));
+    chunked.print(F(">"));
+    switch (i) {
+      case 0:
+        chunked.print(F("Modbus TCP/UDP"));
+        break;
+      case 1:
+        chunked.print(F("Modbus RTU over TCP/UDP"));
+        break;
+      default:
+        break;
+    }
+    chunked.print(F("</option>"));
+  }
+  chunked.print(F("</select>"));
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("Modbus TCP Idle Timeout"));
+  tagInputNumber(chunked, POST_TCP_TIMEOUT, 1, 3600, data.config.tcpTimeout, F("sec"));
+  tagDivClose(chunked);
+}
+
+//            RTU Settings
+void contentRtu(ChunkedPrint &chunked) {
+  tagLabelDiv(chunked, F("Baud Rate"));
+  chunked.print(F("<select class=s name="));
+  chunked.print(POST_BAUD, HEX);
+  chunked.print(F(">"));
+  for (byte i = 0; i < (sizeof(BAUD_RATES) / 2); i++) {
+    chunked.print(F("<option value="));
+    chunked.print(BAUD_RATES[i]);
+    if (data.config.baud == BAUD_RATES[i]) chunked.print(F(" selected"));
+    chunked.print(F(">"));
+    chunked.print(BAUD_RATES[i]);
+    chunked.print(F("00</option>"));
+  }
+  chunked.print(F("</select> bps"));
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("Data Bits"));
+  chunked.print(F("<select name="));
+  chunked.print(POST_DATA, HEX);
+  chunked.print(F(">"));
+  for (byte i = 5; i <= 8; i++) {
+    chunked.print(F("<option value="));
+    chunked.print(i);
+    if ((((data.config.serialConfig & 0x06) >> 1) + 5) == i) chunked.print(F(" selected"));
+    chunked.print(F(">"));
+    chunked.print(i);
+    chunked.print(F("</option>"));
+  }
+  chunked.print(F("</select> bit"));
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("Parity"));
+  chunked.print(F("<select name="));
+  chunked.print(POST_PARITY, HEX);
+  chunked.print(F(">"));
+  for (byte i = 0; i <= 3; i++) {
+    if (i == 1) continue;  // invalid value, skip and continue for loop
+    chunked.print(F("<option value="));
+    chunked.print(i);
+    if (((data.config.serialConfig & 0x30) >> 4) == i) chunked.print(F(" selected"));
+    chunked.print(F(">"));
+    switch (i) {
+      case 0:
+        chunked.print(F("None"));
+        break;
+      case 2:
+        chunked.print(F("Even"));
+        break;
+      case 3:
+        chunked.print(F("Odd"));
+        break;
+      default:
+        break;
+    }
+    chunked.print(F("</option>"));
+  }
+  chunked.print(F("</select>"));
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("Stop Bits"));
+  chunked.print(F("<select name="));
+  chunked.print(POST_STOP, HEX);
+  chunked.print(F(">"));
+  for (byte i = 1; i <= 2; i++) {
+    chunked.print(F("<option value="));
+    chunked.print(i);
+    if ((((data.config.serialConfig & 0x08) >> 3) + 1) == i) chunked.print(F(" selected"));
+    chunked.print(F(">"));
+    chunked.print(i);
+    chunked.print(F("</option>"));
+  }
+  chunked.print(F("</select> bit"));
+  tagDivClose(chunked);
+  chunked.flush();
+  tagLabelDiv(chunked, F("Inter-frame Delay"));
+  tagInputNumber(chunked, POST_FRAMEDELAY, byte(frameDelay() / 1000UL) + 1, 250, data.config.frameDelay, F("ms"));
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("Response Timeout"));
+  tagInputNumber(chunked, POST_TIMEOUT, 50, 5000, data.config.serialTimeout, F("ms"));
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, F("Attempts"));
+  tagInputNumber(chunked, POST_ATTEMPTS, 1, 5, data.config.serialAttempts, F(""));
+  tagDivClose(chunked);
+}
+
+//            Tools
+void contentTools(ChunkedPrint &chunked) {
+  tagLabelDiv(chunked, 0);
+  tagButton(chunked, F("Load Default Settings"), ACT_DEFAULT);
+  chunked.print(F(" (static IP: "));
+  chunked.print(IPAddress(DEFAULT_CONFIG.ip));
+  chunked.print(F(")"));
+  tagDivClose(chunked);
+  tagLabelDiv(chunked, 0);
+  tagButton(chunked, F("Reboot"), ACT_REBOOT);
+  tagDivClose(chunked);
+}
+
+
+//            Server Settings
+void contentServer(ChunkedPrint &chunked) {
+  tagLabelDiv(chunked, F("Modbus Server Address"));
+  tagInputNumber(chunked, POST_SERVER, 1, 247, data.config.serverAddress, F(""));
+  chunked.print(F("<input type=submit value='Save & Apply'><input type=reset value=Cancel>"));
+  tagDivClose(chunked);
+  tagSpan(chunked, JSON_DI_STATUS);
+}
+
+
+void contentWait(ChunkedPrint &chunked) {
+  tagLabelDiv(chunked, 0);
+  chunked.print(F("Reloading. Please wait..."));
+  tagDivClose(chunked);
+}
+
+// Functions providing snippets of repetitive HTML code
+
+void tagInputNumber(ChunkedPrint &chunked, const byte name, const byte min, uint16_t max, uint16_t value, const __FlashStringHelper *units) {
+  chunked.print(F("<input class='s n' required type=number name="));
+  chunked.print(name, HEX);
+  chunked.print(F(" min="));
+  chunked.print(min);
+  chunked.print(F(" max="));
+  chunked.print(max);
+  chunked.print(F(" value="));
+  chunked.print(value);
+  chunked.print(F("> ("));
+  chunked.print(min);
+  chunked.print(F("~"));
+  chunked.print(max);
+  chunked.print(F(") "));
+  chunked.print(units);
+}
+
+void tagInputIp(ChunkedPrint &chunked, const byte name, const byte ip[]) {
+  for (byte i = 0; i < 4; i++) {
+    chunked.print(F("<input name="));
+    chunked.print(name + i, HEX);
+    chunked.print(F(" class='p i' required maxlength=3 pattern='^(&bsol;d{1,2}|1&bsol;d&bsol;d|2[0-4]&bsol;d|25[0-5])$' value="));
+    chunked.print(ip[i]);
+    chunked.print(F(">"));
+    if (i < 3) chunked.print(F("."));
+  }
+}
+
+void tagInputHex(ChunkedPrint &chunked, const byte name, const bool required, const bool printVal, const byte value) {
+  chunked.print(F("<input name="));
+  chunked.print(name, HEX);
+  if (required) {
+    chunked.print(F(" required"));
+  }
+  chunked.print(F(" minlength=2 maxlength=2 class=i pattern='[a-fA-F&bsol;d]+' value='"));
+  if (printVal) {
+    chunked.print(hex(value));
+  }
+  chunked.print(F("'>"));
+}
+
+void tagLabelDiv(ChunkedPrint &chunked, const __FlashStringHelper *label) {
+  chunked.print(F("<div class=r>"));
+  chunked.print(F("<label> "));
+  if (label) {
+    chunked.print(label);
+    chunked.print(F(":"));
+  }
+  chunked.print(F("</label><div>"));
+}
+
+void tagButton(ChunkedPrint &chunked, const __FlashStringHelper *flashString, byte value) {
+  chunked.print(F(" <button name="));
+  chunked.print(POST_ACTION, HEX);
+  chunked.print(F(" value="));
+  chunked.print(value);
+  chunked.print(F(">"));
+  chunked.print(flashString);
+  chunked.print(F("</button>"));
+}
+
+void tagDivClose(ChunkedPrint &chunked) {
+  chunked.print(F("</div>"
+                  "</div>"));  // <div class=r>
+}
+
+void tagSpan(ChunkedPrint &chunked, const byte JSONKEY) {
+  chunked.print(F("<span id="));
+  chunked.print(JSONKEY);
+  chunked.print(F(">"));
+  jsonVal(chunked, JSONKEY);
+  chunked.print(F("</span>"));
+}
+
+void drawStatusTable(ChunkedPrint &chunked){
+  tableStye(chunked);
+  chunked.print(F("<table>"));
+  drawTableHeader(chunked);
+  chunked.print(F("<tbody>"));
+  for(int i=0; i<NUM_DI_PINS; i++){
+    drawTableElement(chunked, i);
+  }
+  chunked.print(F("</tbody>"));
+  chunked.print(F("</table>"));
+}
+
+void tableStye(ChunkedPrint &chunked){
+  chunked.flush();
+  chunked.print(F("<style>"));
+  chunked.print(F("table {border-collapse: collapse;margin: 50px auto;}"));
+  chunked.flush();
+  chunked.print(F("th, td {border: 1px solid #ddd;padding: 6px 20px; text-align: center;}"));
+  chunked.print(F("th {background-color: #EB8C00;color: white;}"));
+  chunked.flush();
+  chunked.print(F(".status-dot {height: 12px;width: 12px;border-radius: 50%;display: inline-block;}"));
+  chunked.print(F(".active-dot {background-color: green;}"));
+  chunked.flush();
+  chunked.print(F(".active-dot {background-color: green;}"));
+  chunked.print(F(".inactive-dot {background-color: red;}"));
+  chunked.print(F("</style>"));
+  chunked.flush();
+}
+
+void drawTableHeader(ChunkedPrint &chunked){
+  chunked.flush();
+  chunked.print(F("<thead>"));
+  chunked.print(F("<tr>"));
+  chunked.print(F("<th>Pin</th>"));
+  chunked.print(F("<th>Address (FC 4)</th>"));
+  chunked.print(F("<th>Status</th>"));
+  chunked.print(F("</tr>"));
+  chunked.print(F("</thead>"));
+  chunked.flush();
+}
+
+void drawTableElement(ChunkedPrint &chunked, int i){
+  chunked.print(F("<tr>"));
+  chunked.print(F("<td>"));
+  chunked.print(pinNames[i]);
+  chunked.print(F("</td>"));
+  chunked.print(F("<td>"));
+  chunked.print(F("0x0"));
+  chunked.print(i);
+  chunked.print(F("</td>"));
+  drawStatus(chunked, i);
+  chunked.print("</tr>");
+  chunked.flush();
+}
+
+void drawStatus(ChunkedPrint &chunked, int i){
+  pinMode(inputPins[i], INPUT);
+  if(digitalRead(inputPins[i])) chunked.print(F("<td><span class=\\\"status-dot active-dot\\\"></span> On </td>"));
+  else chunked.print(F("<td><span class=\\\"status-dot inactive-dot\\\"></span> Off </td>"));
+}
+
+// Menu item strings
+void stringPageName(ChunkedPrint &chunked, byte item) {
+  switch (item) {
+    case PAGE_INFO:
+      chunked.print(F("System Info"));
+      break;
+    case PAGE_STATUS:
+      chunked.print(F("Modbus Status"));
+      break;
+    case PAGE_IP:
+      chunked.print(F("IP Settings"));
+      break;
+    case PAGE_TCP:
+      chunked.print(F("TCP/UDP Settings"));
+      break;
+    case PAGE_RTU:
+      chunked.print(F("RTU Settings"));
+      break;
+    case PAGE_SERVER:
+      chunked.print(F("Modbus Server Settings"));
+      break;
+    case PAGE_TOOLS:
+      chunked.print(F("Tools"));
+      break;
+    default:
+      break;
+  }
+}
+
+void stringStats(ChunkedPrint &chunked, const byte stat) {
+  switch (stat) {
+    case SLAVE_OK:
+      chunked.print(F(" Slave Responded"));
+      break;
+    case SLAVE_ERROR_0X:
+      chunked.print(F(" Slave Responded with Error (Codes 1~8)"));
+      break;
+    case SLAVE_ERROR_0A:
+      chunked.print(F(" Gateway Overloaded (Code 10)"));
+      break;
+    case SLAVE_ERROR_0B:
+    case SLAVE_ERROR_0B_QUEUE:
+      chunked.print(F(" Slave Failed to Respond (Code 11)"));
+      break;
+    case ERROR_TIMEOUT:
+      chunked.print(F(" Response Timeout"));
+      break;
+    case ERROR_RTU:
+      chunked.print(F(" Invalid RTU Response"));
+      break;
+    case ERROR_TCP:
+      chunked.print(F(" Invalid TCP/UDP Request"));
+      break;
+    default:
+      break;
+  }
+  chunked.print(F("<br>"));
+}
+
+void jsonVal(ChunkedPrint &chunked, const byte JSONKEY) {
+  switch (JSONKEY) {
+#ifdef ENABLE_EXTENDED_WEBUI
+    case JSON_TIME:
+      chunked.print(seconds / (3600UL * 24L));
+      chunked.print(F(" days, "));
+      chunked.print((seconds / 3600UL) % 24L);
+      chunked.print(F(" hours, "));
+      chunked.print((seconds / 60UL) % 60L);
+      chunked.print(F(" mins, "));
+      chunked.print((seconds) % 60L);
+      chunked.print(F(" secs"));
+      break;
+    case JSON_RTU_DATA:
+      for (byte i = 0; i < DATA_LAST; i++) {
+        chunked.print(data.rtuCnt[i]);
+        switch (i) {
+          case DATA_TX:
+            chunked.print(F(" Tx bytes / "));
+            break;
+          case DATA_RX:
+            chunked.print(F(" Rx bytes"));
+            break;
+        }
+      }
+    case JSON_ETH_DATA:
+      for (byte i = 0; i < DATA_LAST; i++) {
+        chunked.print(data.ethCnt[i]);
+        switch (i) {
+          case DATA_TX:
+            chunked.print(F(" Tx bytes / "));
+            break;
+          case DATA_RX:
+            chunked.print(F(" Rx bytes (excl. WebUI)"));
+            break;
+        }
+      }
+      break;
+#endif /* ENABLE_EXTENDED_WEBUI */
+    case JSON_RESPONSE:
+      {
+        for (byte i = 0; i < MAX_RESPONSE_LEN; i++) {
+          chunked.print(F("<input value='"));
+          if (i < responseLen) {
+            chunked.print(hex(response[i]));
+          }
+          chunked.print(F("' disabled class=i>"));
+        }
+        chunked.print(F("h"));
+        if (responseLen > MAX_RESPONSE_LEN) {
+          chunked.print(F(" +"));
+          chunked.print(byte(responseLen - MAX_RESPONSE_LEN));
+          chunked.print(F(" bytes"));
+        }
+      }
+      break;
+    case JSON_QUEUE:
+      chunked.print(queueDataSize);
+      chunked.print(F(" / "));
+      chunked.print(MAX_QUEUE_DATA);
+      chunked.print(F(" bytes<br>"));
+      chunked.print(queueHeadersSize);
+      chunked.print(F(" / "));
+      chunked.print(MAX_QUEUE_REQUESTS);
+      chunked.print(F(" requests"));
+      queueDataSize = queueData.size();
+      queueHeadersSize = queueHeaders.size();
+      break;
+    case JSON_STATS:
+      for (byte i = 0; i < ERROR_LAST; i++) {
+        if (i == SLAVE_ERROR_0B_QUEUE) continue;  // SLAVE_ERROR_0B_QUEUE is not shown in web UI
+        chunked.print(data.errorCnt[i]);
+        stringStats(chunked, i);
+      }
+      break;
+    case JSON_TCP_UDP_MASTERS:
+      {
+        for (byte s = 0; s < maxSockNum; s++) {
+          byte remoteIParray[4];
+          W5100.readSnDIPR(s, remoteIParray);
+          if (remoteIParray[0] != 0) {
+            if (W5100.readSnSR(s) == SnSR::UDP) {
+              chunked.print(IPAddress(remoteIParray));
+              chunked.print(F(" UDP<br>"));
+            } else if (W5100.readSnSR(s) == SnSR::ESTABLISHED && W5100.readSnPORT(s) == data.config.tcpPort) {
+              chunked.print(IPAddress(remoteIParray));
+              chunked.print(F(" TCP<br>"));
+            }
+          }
+        }
+      }
+      break;
+    case JSON_SLAVES:
+      {
+        for (byte k = 1; k < MAX_SLAVES; k++) {
+          for (byte s = 0; s <= SLAVE_ERROR_0B_QUEUE; s++) {
+            if (getSlaveStatus(k, s) == true || k == scanCounter) {
+              chunked.print(hex(k));
+              chunked.print(F("h"));
+              if (k == scanCounter) {
+                chunked.print(F(" Scanning...<br>"));
+                break;
+              }
+              stringStats(chunked, s);
+            }
+          }
+        }
+      }
+      break;
+    case JSON_DI_STATUS:
+      drawStatusTable(chunked);
+      break;
+    default:
+      break;
+  }
+}
