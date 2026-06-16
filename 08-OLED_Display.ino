@@ -62,19 +62,31 @@ char cachedLine1[20];
 char cachedLine2[40];
 // Icono de EMASESA (debe estar definido en tu librería o en otro lugar)
 extern const unsigned char emasesa_icon[];
+
+unsigned long lastSliceTime = 0;
 // ---------------------------------------------------------
 // INIT OLEAD
 // ---------------------------------------------------------
 void initOLEAD() {
-  // Cambiado a constructor "_2_" para habilitar la segmentación en 2 páginas de 16px
+  // Mantenemos el constructor de alta velocidad para la pasarela
   u8g2 = new U8G2_SSD1306_128X32_UNIVISION_1_HW_I2C(U8G2_R0, U8X8_PIN_NONE);
-  u8g2->setBusClock(400000);
+  u8g2->setBusClock(400000); 
   u8g2->begin();
-  // Escudo protector contra ruidos electromagnéticos en planta
-  Wire.setTimeout(3); 
-  // Pantalla de inicio con logo
-  showLogo2LinesLeft(*u8g2, emasesa_icon, "EMASESA", "Calidad del agua");
-  delay(1500);
+
+  Wire.setTimeout(2); 
+
+  // ──> CORRECCIÓN CRÍTICA DEL LOGO:
+  // Envolvemos el dibujo en un bucle 'do-while' de páginas.
+  // Esto obliga a la pantalla a procesar las 4 franjas de 8px del logo.
+  u8g2->firstPage();
+  do {
+    // Llamamos a tu función de librería, pero ahora se ejecutará cooperativamente 
+    // por cada franja de la pantalla, completando el logotipo de EMASESA.
+    showLogo2LinesLeft(*u8g2, emasesa_icon, "EMASESA", "Calidad del agua");
+  } while (u8g2->nextPage());
+
+  // Dejamos el delay para que los operarios en planta puedan ver el logo al arrancar
+  delay(1500); 
 }
 /*
 void initOLEAD() {
@@ -94,6 +106,7 @@ void initOLEAD() {
 // ---------------------------------------------------------
 // Dibuja pantalla actual (llamada por updateOLEAD)
 // ---------------------------------------------------------
+/*
 void drawOLEAD(byte idx) {
   char line1[20];
   char line2[40];  
@@ -117,7 +130,7 @@ void drawOLEAD(byte idx) {
     } 
     else if (slaveIsNew[idx]) {
       // ESTADO 2: El dato acaba de entrar en este ciclo -> NEW [Dato] [Unidad]
-      snprintf(line2, sizeof(line2), "new %s %s", valStr.c_str(), slaveConfig[idx].units);
+      snprintf(line2, sizeof(line2), "n %s %s", valStr.c_str(), slaveConfig[idx].units);
       
       // CRÍTICO: Una vez mostrado una vez en pantalla, deja de ser "nuevo"
       slaveIsNew[idx] = false; 
@@ -131,6 +144,7 @@ void drawOLEAD(byte idx) {
   // Mostrar en la pantalla física
   show2LinesFull(*u8g2, line1, line2);
 }
+*/
 /*
 void julian_Draw(byte idx, float data){
   char line1[20];
@@ -198,7 +212,7 @@ void prepareTextData(byte idx) {
       snprintf(cachedLine2, sizeof(cachedLine2), "Stale %s %s", valStr.c_str(), slaveConfig[idx].units);
     } 
     else if (slaveIsNew[idx]) {
-      snprintf(cachedLine2, sizeof(cachedLine2), "new %s %s", valStr.c_str(), slaveConfig[idx].units);
+      snprintf(cachedLine2, sizeof(cachedLine2), "->%s %s", valStr.c_str(), slaveConfig[idx].units);
       slaveIsNew[idx] = false; // Consumir bandera de nuevo
     } 
     else {
@@ -206,6 +220,61 @@ void prepareTextData(byte idx) {
     }
   }
 }
+/*
+void updateOLEAD() { 
+  unsigned long now = millis();
+
+  switch (displayState) {
+    
+    case OLED_IDLE:
+      if (now - lastChange >= DISPLAY_INTERVAL) {
+        lastChange = now;
+        prepareTextData(currentIdx);
+        displayState = START_RENDER;
+      }
+      break;
+
+    case START_RENDER:
+      u8g2->firstPage();
+      lastSliceTime = now; 
+      displayState = RENDERING_PAGES;
+      break;
+
+    case RENDERING_PAGES:
+      // ──> CONTROL CRÍTICO DE TRÁFICO: 
+      // Si no han pasado al menos 6 milisegundos desde la última página del OLED, 
+      // salimos inmediatamente. Esto le da ventanas de tiempo reales al loop() 
+      // para atender los buffers serie de Modbus RTU y los sockets de Modbus TCP.
+      if (now - lastSliceTime < 6) {
+        return; 
+      }
+      lastSliceTime = now; // Actualizar el temporizador de la rebanada
+
+      // Uso de fuentes '_tf' o '_tr' optimizadas en peso para pasarelas de datos:
+      // Línea 1: Sensor (12px)
+      u8g2->setFont(u8g2_font_helvB12_tr); 
+      u8g2->drawStr(0, 13, cachedLine1);
+
+      // Línea 2: Telemetría (12px)
+      u8g2->setFont(u8g2_font_helvB12_tr);
+      u8g2->drawStr(0, 30, cachedLine2);
+
+      // nextPage() devuelve 0 cuando el dibujo de las 4 páginas ha terminado
+      if (u8g2->nextPage() == 0) {
+        displayState = OLED_IDLE;
+        
+        currentIdx++;
+        if (currentIdx >= NUM_SLAVES) {
+          currentIdx = 0;
+        }
+      }
+      break;
+  }
+}
+*/
+
+
+
 void updateOLEAD() { 
   unsigned long now = millis();
   switch (displayState) {
@@ -229,13 +298,13 @@ void updateOLEAD() {
       break;
     case RENDERING_PAGES:
       // 1. Configurar fuente y posición para la Línea 1 (Nombre del Sensor)
-      u8g2->setFont(u8g2_font_helvB08_tr); // Fuente Helvetica de buen tamaño y negrita
-      u8g2->drawStr(0, 12, cachedLine1);    // Subimos a Y=12 para dar espacio abajo
+      u8g2->setFont(u8g2_font_9x15_tr); // Fuente Helvetica de buen tamaño y negrita
+      u8g2->drawStr(0, 15, cachedLine1);    // Subimos a Y=12 para dar espacio abajo
 
       // 2. Configurar fuente y posición para la Línea 2 (Datos / Estado)
       //u8g2->setFont(u8g2_font_profont12_mf); // Fuente muy clara para números y datos
-      u8g2->setFont(u8g2_font_helvB08_tr);
-      u8g2->drawStr(0, 28, cachedLine2);    // Posición Y=28 para la línea inferior
+      u8g2->setFont(u8g2_font_9x15_tr);
+      u8g2->drawStr(0, 31, cachedLine2);    // Posición Y=28 para la línea inferior
 
       // nextPage() envía esta sección por I2C (~1.5ms) y devuelve 0 al terminar el frame
       if (u8g2->nextPage() == 0) {
@@ -249,6 +318,7 @@ void updateOLEAD() {
       break;
   }
 }
+
 /*
 void updateOLEAD() { 
   unsigned long now = millis();
