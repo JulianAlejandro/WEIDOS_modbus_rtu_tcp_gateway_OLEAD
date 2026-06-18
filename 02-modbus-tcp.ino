@@ -27,6 +27,7 @@
    - read from and write to bool array
 
    ***************************************************************** */
+#include "internalClient.h"
 
 byte masks[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };
 
@@ -38,6 +39,12 @@ byte masks[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };
 #define TCP_REQUEST_MASK B00000111  // Stores TCP client number
 //AMR begin
 #define INTERNAL_REQUEST B00010000   // Bit 4 libre
+
+//extern const byte slaveIDs[];
+//extern const byte NUM_SLAVES;
+//extern const PollConfig pollConfig[NUM_SLAVES];
+//extern uint16_t tid_to_search;
+
 //AMR end
 
 uint16_t crc;
@@ -206,6 +213,22 @@ byte checkRequest(byte inBuffer[], uint16_t msgLength, const uint32_t remoteIP, 
   }
   if (queueData.size() > queueDataSize) queueDataSize = queueData.size();
   if (queueHeaders.size() > queueHeadersSize) queueHeadersSize = queueHeaders.size();
+
+  //added to add a functionality in 07-internal Client
+  for (int i = 0; i < NUM_SLAVES; i++){
+    if(inBuffer[addressPos] == slaveIDs[i]){ // si la solicitud esta dentro de los id 
+      if(inBuffer[addressPos + 1] == pollConfig[i].func){ // si el function code es el correcto
+        uint16_t entranteAddr = (inBuffer[addressPos + 2] << 8) | inBuffer[addressPos + 3];
+        uint16_t entranteSize = (inBuffer[addressPos + 4] << 8) | inBuffer[addressPos + 5];
+        if((entranteAddr == pollConfig[i].address) && (entranteSize == 2)){
+          tid_to_search =  (inBuffer[0] << 8) | inBuffer[1]; // capturamos el TID  a tener en cuenta 
+
+          return 0; 
+        }
+      }
+    }
+  }
+  //--end add functionality in 07-internal Client
   return 0;
 }
 

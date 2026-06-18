@@ -6,6 +6,8 @@
 #include <Wire.h>
 #include <U8g2lib.h>
 #include <WPriv_OLED128X32emasesa.h>  // Tu librería con funciones de display
+
+#include "internalClient.h"
 // ---------------------------------------------------------
 // DISPLAY CONFIG
 // ---------------------------------------------------------
@@ -17,13 +19,13 @@ const unsigned long DISPLAY_INTERVAL = 5000;   // 6 segundos es el punto dulce e
 // ---------------------------------------------------------
 // EXTERNOS (estado interno del gateway)
 // ---------------------------------------------------------
-extern const byte slaveIDs[];
-extern const byte NUM_SLAVES;
-extern float slaveData[];
-extern unsigned long slaveLastUpdate[];
-extern bool slaveDisabled[];
-extern bool slaveIsNew[];
-extern const unsigned long STALE_TIMEOUT;
+//extern const byte slaveIDs[];
+//extern const byte NUM_SLAVES;
+//extern float slaveData[];
+//extern unsigned long slaveLastUpdate[];
+//extern bool slaveDisabled[];
+//extern bool slaveIsNew[];
+//extern const unsigned long STALE_TIMEOUT;
 // ---------------------------------------------------------
 // NOMBRES DE VARIABLES (UI)
 // ---------------------------------------------------------

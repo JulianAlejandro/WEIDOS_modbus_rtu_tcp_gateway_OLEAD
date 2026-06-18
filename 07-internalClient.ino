@@ -2,17 +2,18 @@
 // 07-internalClient.ino
 // Cliente interno Modbus RTU (polling periódico)
 // ---------------------------------------------------------
-
+#include "internalClient.h"
 // ---- Configuración ----
 
-const byte slaveIDs[] = {1, 2, 3, 4, 5}; 
-const byte NUM_SLAVES = sizeof(slaveIDs) / sizeof(slaveIDs[0]);
+const byte slaveIDs[NUM_SLAVES] = {1, 2, 3, 4, 5};
+//const byte slaveIDs[] = {1, 2, 3, 4, 5}; 
+//const byte NUM_SLAVES = sizeof(slaveIDs) / sizeof(slaveIDs[0]);
 
 // Configuración de polling interno
-struct PollConfig {
-  byte func;        // 0x03 = holding registers, 0x04 = input registers
-  uint16_t address; // Dirección inicial del primer registro
-};
+//struct PollConfig {
+//  byte func;        // 0x03 = holding registers, 0x04 = input registers
+//  uint16_t address; // Dirección inicial del primer registro
+//};
 //Variables de control de ploling
 const unsigned long INTERNAL_POLL_THRESHOLD = 30000; // 30 segundos sin actualizar -> hacer polling
 const unsigned long INTERNAL_CHECK_INTERVAL = 5000;  // Revisar cada 5 segundos
@@ -49,7 +50,9 @@ const uint16_t MAX_TRY_PENDINGS = 5;  // intentamos 3 veces enviar desde interna
 uint16_t countPendings[NUM_SLAVES] = {0};
 
 
-byte count_slave_polling = 0; 
+byte count_slave_polling = 0;
+
+uint16_t tid_to_search = 0;
 
 // ---------------------------------------------------------
 // Actualiza valor cuando llega respuesta (llamada externa)
@@ -255,14 +258,35 @@ void checkInternalPolling() {
   }
 }
 
+// esta funcion captura las tramas que viajan de vuelta al modbus TCP
+// estas tramas pueden llegar generadas por el scada
+// estas tramas pueden llegar generadas por el internal. 
+bool internalClientFunction(const byte MBAP[] ,const byte PDU[],  const uint16_t pduLength){
 
-void internalClientFunction(const byte PDU[],  const uint16_t pduLength){
+  //bool idValido = false; 
+  //for (int i = 0; i < NUM_SLAVES; i++) {
+  //  if (PDU[0] == slaveIDs[i]) {
+  //    idValido = true; 
+  //    break; 
+  //  }
+  //}
+ //
+  //if (!idValido) return;
 
-  if((PDU[0] > NUM_SLAVES) && (PDU[0] < 1)){
-    return; 
+  // 1. Reconstruimos el TID de la respuesta de forma segura
+  uint16_t tid_respuesta = (MBAP[0] << 8) | MBAP[1];
+
+  // de momento solo tendremos en cuenta los tid_to_search
+  if(tid_respuesta != 0){ // si el tid es 0 , es uno del internal client
+    if (tid_to_search != tid_respuesta) { 
+      //Serial.println("a"); 
+      return true; // Peticio de SCADA que no esta dentro de las ID deseadas, ni en las direcciones y size. 
+    }
   }
+  tid_to_search = 0; //una vez valorado el tid_to_search lo reinicializamos por si acaso. 
 
-    if (digitalRead(DI_7) != LOW) return; 
+  //Serial.println("a"); 
+  if (digitalRead(DI_7) != LOW) return true; // todo pensar
   // --- DEBUG RAW ---
    // Serial.print("[MODBUS RESP] PDU: ");
    // for (int i = 0; i < pduLength; i++) {
@@ -270,38 +294,42 @@ void internalClientFunction(const byte PDU[],  const uint16_t pduLength){
    //   Serial.print(" ");
    // }
    // Serial.println();
-    byte func = PDU[1];
+  byte func = PDU[1];
 
-    if ((func == 0x03 || func == 0x04) && pduLength >= 7 && PDU[2] >= 4 && (PDU[2] % 4 == 0)) {
-      byte byteCount = PDU[2];
+  if ((func == 0x03 || func == 0x04) && pduLength >= 7 && PDU[2] >= 4 && (PDU[2] % 4 == 0)) {
+    byte byteCount = PDU[2];
 
-      for (int i = 0; i < byteCount; i += 4) {
+    for (int i = 0; i < byteCount; i += 4) {
 
-        int dataOffset = 3 + i;
-        int32_t intValue; // nuveo cambio para hacer la conversion
+      int dataOffset = 3 + i;
 
-        uint8_t intBytes[4] = {
-          PDU[dataOffset + 3], // D
-          PDU[dataOffset + 2], // C
-          PDU[dataOffset + 1], // B
-          PDU[dataOffset + 0]  // A
-        };
+      int32_t intValue; // nuveo cambio para hacer la conversion
 
-        memcpy(&intValue, intBytes, 4);
+      uint8_t intBytes[4] = {
+        PDU[dataOffset + 3], // D
+        PDU[dataOffset + 2], // C
+        PDU[dataOffset + 1], // B
+        PDU[dataOffset + 0]  // A
+      };
+
+      memcpy(&intValue, intBytes, 4);
 
       //  Serial.print("Entero 32 bits (DCBA): ");
       //  Serial.println(intValue);
 
-        float value = (float)intValue / 1000;
+      float value = (float)intValue / 1000;
         
-        //float value = (float)intValue;
+      //float value = (float)intValue;
 
-        // --- NUEVO: guardar para display ---
-        updateSlaveData(PDU[0], value);
+      // --- NUEVO: guardar para display ---
+      updateSlaveData(PDU[0], value);
 
-      }
     }
-  
+  }
+  if(tid_respuesta == 0){ // en caso de que la peticion haya sido hecha por el internal client, se indica false para evitar que se envie repuesta al modbus TCP. 
+    return false; 
+  }
+  return true; 
 }
 
 

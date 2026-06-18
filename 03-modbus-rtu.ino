@@ -15,9 +15,10 @@
    calculateCRC()
 
    ***************************************************************** */
+//#include "internalClient.h"
 
 #define SERIAL_TX_BUFFER_SIZE  256
-extern const byte NUM_SLAVES;
+//extern const byte NUM_SLAVES;
 
 void sendSerial() {
   if (!sendMicroTimer.isOver()) {
@@ -177,10 +178,14 @@ void recvSerial() {
   }
 }
 
+
 void sendResponse(const byte MBAP[], const byte PDU[], const uint16_t pduLength) {
     //AMR Y JAMES
-  //// Add condition to start OLED logics only if DI is in LOW (Meaning that the Webserver is not Started webServer.begin(); at 01-interfaces.ino) 
-  internalClientFunction(PDU, pduLength);  
+  //// Add condition to start OLED logics only if DI is in LOW (Meaning that the Webserver is not Started webServer.begin(); at 01-interfaces.ino)
+  // aqui se obtiene la trama que va enviarse por modbus TCP... pero claro....tambien estamos mandando algo que NO ha pedido. 
+  if(!internalClientFunction(MBAP, PDU, pduLength)){
+    // de momento no hacemos nada porque no comprendemos lo que pasa despues....pero se estan enviando mensajes al SCADA sin el pedirlos, los ignora seguramente. 
+  }   
   //AMR Y JAMES END
 
   header_t myHeader = queueHeaders.first();
