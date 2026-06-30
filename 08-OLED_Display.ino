@@ -186,12 +186,21 @@ void drawOLEAD(byte idx) {
 // ---------------------------------------------------------
 // Dibuja pantalla actual (llamada por updateOLEAD)
 // ---------------------------------------------------------
+// ---------------------------------------------------------
+// Dibuja pantalla actual (Modificado para arquitectura de páginas)
+// ---------------------------------------------------------
 void drawWaitingOLEAD() {
   char line1[20];
   char line2[20];
   strcpy(line1, "Webserver Active");
   strcpy(line2, "");
-  show2LinesFull(*u8g2, line1, line2);
+
+  // ──> CORRECCIÓN CRÍTICA: Bucle de páginas para renderizado completo
+  u8g2->firstPage();
+  do {
+    // Se llama repetidamente para que pinte el texto en cada franja de la pantalla
+    show2LinesFull(*u8g2, line1, line2);
+  } while (u8g2->nextPage());
 }
 // ---------------------------------------------------------
 // Llamar desde loop() periódicamente

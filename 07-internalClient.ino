@@ -22,11 +22,11 @@ bool internalPending[NUM_SLAVES] = {false};          // true si hay una petició
 unsigned long lastInternalCheck = 0;
 // Ajustar las direcciones según tu hardware real
 const PollConfig pollConfig[NUM_SLAVES] = {
-  {0x03, 0xFC00}, // ID 1: Cloro   (input register 0)
-  {0x03, 0xFC00}, // ID 2: pH       (input register 2)
-  {0x03, 0xFC00}, // ID 3: Densidad (input register 4)
-  {0x03, 0xFC00}, // ID 4: Turbidez (input register 6)
-  {0x03, 0x000A}, // ID 5: Caudal   (input register 8)
+  {0x03, 0x0000}, // ID 1: Cloro   (input register 0)
+  {0x03, 0x0000}, // ID 2: pH       (input register 2)
+  {0x03, 0x0000}, // ID 3: Densidad (input register 4)
+  {0x03, 0x0000}, // ID 4: Turbidez (input register 6)
+  {0x03, 0x0000}, // ID 5: Caudal   (input register 8)
   //{0x03, 0x0000}, // ID 10: Temperatura (input register 10)
 };
 
@@ -115,7 +115,7 @@ void checkOfflineStatus()
 // ---------------------------------------------------------
 // Encola peticion interna
 // ---------------------------------------------------------
-/*
+
 void enqueueInternalRequest(byte idx) {
   if (idx >= NUM_SLAVES) return;
   if (internalPending[idx]) return;      // Ya hay una petición en curso
@@ -153,7 +153,8 @@ void enqueueInternalRequest(byte idx) {
     queueData.push(pdu[i]);
   }
 }
-*/
+
+/*
 // ---------------------------------------------------------
 // Encola peticion interna (CON PRIORIDAD AL FRENTE)
 // ---------------------------------------------------------
@@ -215,7 +216,7 @@ void enqueueInternalRequest(byte idx) {
     0                         // atts (sin usar)
   });
 }
-
+*/
 
 // ---------------------------------------------------------
 // Verifica Polling interno
